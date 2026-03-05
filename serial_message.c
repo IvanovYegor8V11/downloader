@@ -1,69 +1,42 @@
-#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
 
 int main() {
-    const char* port_name = "\\\\.\\COM8";
-    HANDLE hSerial;
-    DCB dcbSerialParams = {0};
-    COMMTIMEOUTS timeouts = {0};
+    int serial_port;
+    struct termios tty;
+    char buffer[256];
 
-    hSerial = CreateFile(
-        port_name,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        0,
-        OPEN_EXISTING,
-        0,
-        0
-    );
+    serial_port = open("/dev/ttyGS0", O_RDWR);
 
-    if (hSerial == INVALID_HANDLE_VALUE) {
-        printf("Error opening port %s\n", port_name);
-        return -1;
+    if (serial_port < 0) {
+        perror("Error opening serial port");
+        return 1;
     }
 
-    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
-    if (!GetCommState(hSerial, &dcbSerialParams)) {
-        printf("Error getting state of port\n");
-        CloseHandle(hSerial);
-        return -1;
+    tcgetattr(serial_port, &tty);
+
+    tty.c_cflag = B9600 | CS8 | CLOCAL | CREAD;
+    tty.c_iflag = IGNPAR;
+    tty.c_oflag = 0;
+    tty.c_lflag = 0;
+
+    tcflush(serial_port, TCIFLUSH);
+    tcsetattr(serial_port, TCSANOW, &tty);
+
+    write(serial_port, "Ping\n", 5);
+    printf("Sent: Ping\n");
+
+    int n = read(serial_port, buffer, sizeof(buffer) - 1);
+
+    if (n > 0) {
+        buffer[n] = '\0';
+        printf("Received: %s\n", buffer);
     }
 
-    dcbSerialParams.BaudRate = CBR_115200;
-    dcbSerialParams.ByteSize = 8;
-    dcbSerialParams.StopBits = ONESTOPBIT;
-    dcbSerialParams.Parity = NOPARITY;
-
-    if (!SetCommState(hSerial, &dcbSerialParams)) {
-        printf("Error setting port parameters\n");
-        CloseHandle(hSerial);
-        return -1;
-    }
-
-    timeouts.ReadIntervalTimeout = 50;
-    timeouts.ReadTotalTimeoutConstant = 50;
-    timeouts.ReadTotalTimeoutMultiplier = 10;
-    timeouts.WriteTotalTimeoutConstant = 50;
-    timeouts.WriteTotalTimeoutMultiplier = 10;
-
-    if (!SetCommTimeouts(hSerial, &timeouts)) {
-        printf("Error setting timeouts\n");
-        CloseHandle(hSerial);
-        return -1;
-    }
-
-    const char* message = "Hello from Windows laptop!\n";
-    DWORD bytes_written;
-    BOOL result = WriteFile(hSerial, message, strlen(message), &bytes_written, NULL);
-
-    if (!result || bytes_written != strlen(message)) {
-        printf("Error writing to port\n");
-    } else {
-        printf("Successfully sent message: %s", message);
-    }
-
-    CloseHandle(hSerial);
-
+    close(serial_port);
     return 0;
 }
