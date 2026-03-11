@@ -1,76 +1,104 @@
-#include <windows.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <stdint.h>
+#include <string.h>
 
-void print_hex(const unsigned char *buffer, DWORD length) {
-    for (DWORD i = 0; i < length; i++) {
+#define PACKET_SIZE 6
+#define HEADER_SIZE 2
+
+// Функция надежного чтения
+int read_exact(int fd, uint8_t *buffer, int count) {
+    int total_read = 0;
+    int n = 0;
+    while (total_read < count) {
+        n = read(fd, buffer + total_read, count - total_read);
+        if (n < 0) return -1; // Ошибка
+        if (n == 0) break;    // EOF или таймаут
+        total_read += n;
+    }
+    return total_read;
+}
+
+void print_hex(const uint8_t *buffer, int length) {
+    for (int i = 0; i < length; i++) {
         printf("%02X ", buffer[i]);
     }
     printf("\n");
 }
 
 int main() {
-    HANDLE hSerial;
-    DCB dcbSerialParams = {0};
-    unsigned char buffer[256];
-    DWORD bytesRead;
-    DWORD bytesWritten;
+    int serial_port;
+    struct termios tty;
+    uint8_t rxBuffer[PACKET_SIZE];
+    uint8_t txBuffer[PACKET_SIZE];
 
-    printf("Opening port COM8...\n");
-
-    hSerial = CreateFile(
-        "\\\\.\\COM8",
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        0,
-        NULL
-    );
-
-    if (hSerial == INVALID_HANDLE_VALUE) {
-        printf("Error opening COM8\n");
+    serial_port = open("/dev/ttyGS0", O_RDWR | O_NOCTTY);
+    if (serial_port < 0) {
+        printf("Error opening serial port: %d\n", serial_port);
         return 1;
     }
 
-    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
-    GetCommState(hSerial, &dcbSerialParams);
-
-    dcbSerialParams.BaudRate = CBR_115200;
-    dcbSerialParams.ByteSize = 8;
-    dcbSerialParams.StopBits = ONESTOPBIT;
-    dcbSerialParams.Parity = NOPARITY;
-    
-    dcbSerialParams.fOutX = FALSE;
-    dcbSerialParams.fInX = FALSE;
-    dcbSerialParams.fRtsControl = RTS_CONTROL_DISABLE;
-    dcbSerialParams.fDtrControl = DTR_CONTROL_DISABLE;
-
-    SetCommState(hSerial, &dcbSerialParams);
-
-    Sleep(1000);
-
-    printf("Listening for binary data...\n");
-
-    while (1) {
-        if (ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, NULL)) {
-            if (bytesRead > 0) {
-                printf("Received [%ld bytes]: ", bytesRead);
-                print_hex(buffer, bytesRead);
-
-                if (bytesRead >= 1 && buffer[0] == 0xAA) {
-                    unsigned char response[] = { 0xBB };
-                    
-                    WriteFile(hSerial, response, 1, &bytesWritten, NULL);
-                    printf("Sent: 0xBB\n");
-                }
-            }
-        } 
-        else {
-            printf("Read error\n");
-            break;
-        }
+    // Настройка порта (Raw mode)
+    if (tcgetattr(serial_port, &tty) != 0) {
+        printf("Error from tcgetattr");
+        return 1;
     }
 
-    CloseHandle(hSerial);
+    cfsetospeed(&tty, B115200);
+    cfsetispeed(&tty, B115200);
+
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
+    tty.c_cflag |= (CREAD | CLOCAL);
+    tty.c_cflag &= ~(PARENB | CSTOPB | CRTSCTS);
+    
+    tty.c_iflag = IGNPAR;
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+    
+    tty.c_oflag = 0;
+    tty.c_lflag = 0; // Raw mode
+
+    // Настройка таймаута чтения (5 секунд ожидания)
+    tty.c_cc[VMIN] = 0;
+    tty.c_cc[VTIME] = 50; 
+
+    tcflush(serial_port, TCIFLUSH);
+    tcsetattr(serial_port, TCSANOW, &tty);
+
+    printf("Listening for packets...\n");
+
+    // Читаем ровно 6 байт
+    int n = read_exact(serial_port, rxBuffer, PACKET_SIZE);
+
+    if (n == PACKET_SIZE) {
+        printf("Received Packet [%d bytes]: ", n);
+        print_hex(rxBuffer, n);
+
+        // Проверка заголовка (ожидает 0xAA 0xBB от Windows)
+        if (rxBuffer[0] == 0xAA && rxBuffer[1] == 0xBB) {
+            printf("Header Valid. Processing data...\n");
+            
+            // Формируем ответ
+            // Заголовок ответа: 0xCC 0xDD
+            txBuffer[0] = 0xCC;
+            txBuffer[1] = 0xDD;
+            // Данные ответа (копируем полученные данные + 1 для примера)
+            txBuffer[2] = rxBuffer[2];
+            txBuffer[3] = rxBuffer[3];
+            txBuffer[4] = rxBuffer[4];
+            txBuffer[5] = rxBuffer[5] + 1; 
+
+            write(serial_port, txBuffer, PACKET_SIZE);
+            printf("Sent Response: ");
+            print_hex(txBuffer, PACKET_SIZE);
+        } else {
+            printf("Invalid Header. Ignoring.\n");
+        }
+    } else {
+        printf("Read incomplete. Got %d bytes instead of %d\n", n, PACKET_SIZE);
+    }
+
+    close(serial_port);
     return 0;
 }
