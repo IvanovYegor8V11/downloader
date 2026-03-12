@@ -2,22 +2,19 @@
 #include <stdio.h>
 #include <stdint.h>
 
-// Размер пакета: 2 байта заголовок + 4 байта данные
 #define PACKET_SIZE 6
 #define HEADER_SIZE 2
 #define DATA_SIZE 4
 
-// Функция для надежного чтения ровно count байт
 BOOL ReadExact(HANDLE hSerial, uint8_t* buffer, DWORD count, DWORD* bytesReadTotal) {
     DWORD bytesRead = 0;
     *bytesReadTotal = 0;
     
     while (*bytesReadTotal < count) {
         if (!ReadFile(hSerial, buffer + *bytesReadTotal, count - *bytesReadTotal, &bytesRead, NULL)) {
-            return FALSE; // Ошибка чтения
+            return FALSE;
         }
         if (bytesRead == 0) {
-            // Таймаут или разрыв соединения (зависит от настроек таймаутов)
             break; 
         }
         *bytesReadTotal += bytesRead;
@@ -40,15 +37,14 @@ int main() {
     DWORD bytesReadTotal;
     DWORD bytesWritten;
 
-    printf("Opening port COM8...\n");
+    printf("Opening port COM7...\n");
     hSerial = CreateFile("\\\\.\\COM8", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
 
     if (hSerial == INVALID_HANDLE_VALUE) {
-        printf("Error opening COM8\n");
+        printf("Error opening COM7\n");
         return 1;
     }
 
-    // Настройка порта (Raw mode)
     dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
     GetCommState(hSerial, &dcbSerialParams);
     dcbSerialParams.BaudRate = CBR_115200;
@@ -61,7 +57,6 @@ int main() {
     dcbSerialParams.fDtrControl = DTR_CONTROL_DISABLE;
     SetCommState(hSerial, &dcbSerialParams);
 
-    // Настройка таймаутов (чтобы ReadFile не висел вечно)
     COMMTIMEOUTS timeouts = {0};
     timeouts.ReadIntervalTimeout = 100;
     timeouts.ReadTotalTimeoutMultiplier = 10;
@@ -72,11 +67,9 @@ int main() {
 
     Sleep(500);
 
-    // --- ФОРМИРОВАНИЕ ПАКЕТА ---
-    // Заголовок: 0xAA 0xBB (условная команда "GET_STATUS")
     txBuffer[0] = 0xAA; 
     txBuffer[1] = 0xBB;
-    // Данные: 0x01 0x02 0x03 0x04 (параметры команды)
+    
     txBuffer[2] = 0x01;
     txBuffer[3] = 0x02;
     txBuffer[4] = 0x03;
@@ -85,30 +78,30 @@ int main() {
     printf("Sending Packet: ");
     print_hex(txBuffer, PACKET_SIZE);
 
-    // Отправка
     if (WriteFile(hSerial, txBuffer, PACKET_SIZE, &bytesWritten, NULL)) {
         printf("Sent %ld bytes\n", bytesWritten);
-    } else {
+    } 
+    else {
         printf("Write Error\n");
         CloseHandle(hSerial);
         return 1;
     }
 
-    // Прием ответа (ждем ровно 6 байт)
     printf("Waiting for response...\n");
     if (ReadExact(hSerial, rxBuffer, PACKET_SIZE, &bytesReadTotal)) {
         printf("Received Packet [%ld bytes]: ", bytesReadTotal);
         print_hex(rxBuffer, bytesReadTotal);
 
-        // Проверка заголовка ответа
         if (rxBuffer[0] == 0xCC && rxBuffer[1] == 0xDD) {
             printf("Success! Header matches (0xCC 0xDD)\n");
             printf("Data payload: %02X %02X %02X %02X\n", rxBuffer[2], rxBuffer[3], rxBuffer[4], rxBuffer[5]);
-        } else {
+        } 
+        else {
             printf("Error: Unknown header received\n");
         }
-    } else {
-        printf("Read Error or Timeout. Received only %ld bytes.\n", bytesReadTotal);
+    } 
+    else {
+        printf("Read Error or Timeout. Received only %ld bytes. (%02X %02X)\n", bytesReadTotal, rxBuffer[0], rxBuffer[1]);
     }
 
     CloseHandle(hSerial);

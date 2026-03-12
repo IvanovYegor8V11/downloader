@@ -8,14 +8,13 @@
 #define PACKET_SIZE 6
 #define HEADER_SIZE 2
 
-// Функция надежного чтения
 int read_exact(int fd, uint8_t *buffer, int count) {
     int total_read = 0;
     int n = 0;
     while (total_read < count) {
         n = read(fd, buffer + total_read, count - total_read);
-        if (n < 0) return -1; // Ошибка
-        if (n == 0) break;    // EOF или таймаут
+        if (n < 0) return -1;
+        if (n == 0) break;
         total_read += n;
     }
     return total_read;
@@ -40,7 +39,6 @@ int main() {
         return 1;
     }
 
-    // Настройка порта (Raw mode)
     if (tcgetattr(serial_port, &tty) != 0) {
         printf("Error from tcgetattr");
         return 1;
@@ -57,9 +55,8 @@ int main() {
     tty.c_iflag &= ~(IXON | IXOFF | IXANY);
     
     tty.c_oflag = 0;
-    tty.c_lflag = 0; // Raw mode
+    tty.c_lflag = 0;
 
-    // Настройка таймаута чтения (5 секунд ожидания)
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 50; 
 
@@ -68,22 +65,18 @@ int main() {
 
     printf("Listening for packets...\n");
 
-    // Читаем ровно 6 байт
     int n = read_exact(serial_port, rxBuffer, PACKET_SIZE);
 
     if (n == PACKET_SIZE) {
         printf("Received Packet [%d bytes]: ", n);
         print_hex(rxBuffer, n);
 
-        // Проверка заголовка (ожидает 0xAA 0xBB от Windows)
         if (rxBuffer[0] == 0xAA && rxBuffer[1] == 0xBB) {
             printf("Header Valid. Processing data...\n");
             
-            // Формируем ответ
-            // Заголовок ответа: 0xCC 0xDD
             txBuffer[0] = 0xCC;
             txBuffer[1] = 0xDD;
-            // Данные ответа (копируем полученные данные + 1 для примера)
+            
             txBuffer[2] = rxBuffer[2];
             txBuffer[3] = rxBuffer[3];
             txBuffer[4] = rxBuffer[4];
@@ -92,10 +85,12 @@ int main() {
             write(serial_port, txBuffer, PACKET_SIZE);
             printf("Sent Response: ");
             print_hex(txBuffer, PACKET_SIZE);
-        } else {
+        } 
+        else {
             printf("Invalid Header. Ignoring.\n");
         }
-    } else {
+    } 
+    else {
         printf("Read incomplete. Got %d bytes instead of %d\n", n, PACKET_SIZE);
     }
 
